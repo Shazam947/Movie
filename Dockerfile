@@ -1,22 +1,24 @@
+# base image
 FROM python:3.10-slim
 
-
-# install ffmpeg + build deps
-RUN apt-get update && apt-get install -y ffmpeg build-essential libssl-dev libffi-dev && rm -rf /var/lib/apt/lists/*
-
-
+# set working directory
 WORKDIR /app
 
+# install system dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# copy repo files
-COPY . /app
+# copy requirements
+COPY requirements.txt .
 
+# install python deps (with pip upgrade to avoid warnings)
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# install python deps
-RUN pip install --no-cache-dir -r requirements.txt
+# copy app code
+COPY . .
 
-
-ENV TEMP_DIR=/tmp/vc_userbot
-
-
+# default command
 CMD ["python", "telegram_vc_userbot.py"]
