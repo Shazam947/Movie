@@ -1,0 +1,307 @@
+"""
+FILE: telegram_vc_userbot.py
+----------------------------------------------------------
+This single-file bundle contains:
+  1) a sample Dockerfile (in this comment) for Render/docker
+  2) the full userbot code using Pyrogram + PyTgCalls
+----------------------------------------------------------
+HOW TO USE (locally):
+  - Install ffmpeg on system (apt: sudo apt-get install -y ffmpeg)
+  - pip install pyrogram tgcrypto pytgcalls aiofiles python-dotenv
+  - Create a .env file with:
+      API_ID=your_api_id
+      API_HASH=your_api_hash
+      SESSION_NAME=session_name_optional
+  - Run: python telegram_vc_userbot.py
+  - First run will open interactive login (enter phone & code) to create session (if SESSION_NAME not a string session)
+----------------------------------------------------------
+DOCKER (example Dockerfile below) -> good for Render:
+  - Use the provided Dockerfile (paste the Dockerfile contents into a separate file if deploying)
+----------------------------------------------------------
+Dockerfile (paste this into a file named Dockerfile if you want to containerize):
+
+# ---------- Dockerfile START ----------
+# Use small python image that includes ffmpeg in builder OR install ffmpeg
+FROM python:3.10-slim
+
+# ffmpeg & build deps
+RUN apt-get update && apt-get install -y ffmpeg build-essential libssl-dev libffi-dev && rm -rf /var/lib/apt/lists/*
+
+# working dir
+WORKDIR /app
+
+# copy single file (you'll add telegram_vc_userbot.py to the image)
+COPY telegram_vc_userbot.py /app/telegram_vc_userbot.py
+
+# install python deps
+RUN pip install --no-cache-dir pyrogram tgcrypto pytgcalls aiofiles python-dotenv
+
+# env example (override in Render dashboard)
+ENV API_ID=""
+ENV API_HASH=""
+ENV SESSION_NAME="vc_user_session"
+
+CMD ["python", "telegram_vc_userbot.py"]
+# ---------- Dockerfile END ----------
+
+END OF DOCKERFILE COMMENT
+"""
+
+# ------------------- ACTUAL PYTHON SCRIPT -------------------
+import os
+import asyncio
+import tempfile
+import shutil
+from pathlib import Path
+from dotenv import load_dotenv
+
+# networking/time
+import time
+
+# Pyrogram & PyTgCalls
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from pytgcalls import PyTgCalls
+from pytgcalls.types.input_stream import InputAudioStream
+from pytgcalls.types.input_stream import AudioPiped
+
+# aiofiles for safe async file ops (optional)
+import aiofiles
+
+# load env
+load_dotenv()
+
+API_ID = int(os.getenv("API_ID") or 0)
+API_HASH = os.getenv("API_HASH") or ""
+SESSION_NAME = os.getenv("SESSION_NAME") or "vc_user_session"
+TEMP_DIR = os.getenv("TEMP_DIR") or "/tmp/vc_userbot"
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+if not API_ID or not API_HASH:
+    print("ERROR: Set API_ID and API_HASH in environment or .env")
+    raise SystemExit(1)
+
+# Create Pyrogram client (user account). If a session file exists, it will use it.
+app = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH)
+pytgcalls = PyTgCalls(app)
+
+# In-memory player state per chat
+players = {}  # chat_id -> {file, position_seconds, started_at_ts, playing(bool)}
+
+# Helper: safe cleanup of old files
+def cleanup_temp():
+    """Remove files older than 2 hours to avoid disk fill."""
+    now = time.time()
+    for p in Path(TEMP_DIR).iterdir():
+        try:
+            if p.is_file():
+                if now - p.stat().st_mtime > 2 * 3600:  # older than 2 hours
+                    p.unlink()
+        except Exception:
+            pass
+
+async def download_media_local(message: Message) -> str:
+    """Download media to TEMP_DIR and return local path."""
+    cleanup_temp()
+    filename = f"{message.chat.id}_{message.message_id}"
+    path = os.path.join(TEMP_DIR, filename)
+    # Pyrogram's download_media sync API is fine inside async handler
+    local_path = await app.download_media(message, file_name=path)
+    return local_path
+
+async def start_playback(chat_id: int, local_path: str, start_time: int = 0):
+    """Start playing local file in chat_id voice chat from start_time (seconds)."""
+    # Build AudioPiped with -ss if seeking
+    # PyTgCalls AudioPiped accepts 'file' (path) and 'file_extras' to pass to ffmpeg
+    extras = []
+    if start_time and start_time > 0:
+        extras += ["-ss", str(start_time)]
+    # -reconnect args are not needed for local file but harmless
+    stream = AudioPiped(local_path, file_extras=extras)
+    # If PyTgCalls session not started, start it
+    try:
+        pytgcalls.start()
+    except Exception:
+        pass
+    # play
+    await pytgcalls.join_group_call(chat_id, stream)
+    # mark state
+    players[chat_id] = {
+        "file": local_path,
+        "position": start_time,
+        "started_at": time.time(),
+        "playing": True
+    }
+
+# Commands: /play (reply to media), /pause, /resume, /seek <+/-sec or abs>, /stop, /status
+@app.on_message(filters.command("play") & (filters.private | filters.group))
+async def cmd_play(client, message: Message):
+    # Expect reply to a media message
+    target = message.reply_to_message
+    if not target or not (target.video or target.document or target.audio):
+        await message.reply_text("Reply to a video/audio/document message with /play")
+        return
+
+    await message.reply_text("Downloading file... (will start when ready)")
+    try:
+        local_path = await download_media_local(target)
+    except Exception as e:
+        await message.reply_text(f"Download failed: {e}")
+        return
+
+    await message.reply_text("Download complete. Joining VC and starting playback...")
+    try:
+        await start_playback(message.chat.id, local_path, start_time=0)
+        await message.reply_text("Playing ✅ (use /pause /resume /seek /stop )")
+    except Exception as e:
+        await message.reply_text(f"Play failed: {e}")
+
+@app.on_message(filters.command("pause") & (filters.private | filters.group))
+async def cmd_pause(_, message: Message):
+    chat_id = message.chat.id
+    if chat_id not in players:
+        await message.reply_text("No active playback in this chat.")
+        return
+    try:
+        await pytgcalls.pause_stream(chat_id)
+        players[chat_id]["playing"] = False
+        # update position roughly
+        elapsed = int(time.time() - players[chat_id].get("started_at", time.time()))
+        players[chat_id]["position"] += elapsed
+        await message.reply_text("Paused ⏸️")
+    except Exception as e:
+        await message.reply_text(f"Pause failed: {e}")
+
+@app.on_message(filters.command("resume") & (filters.private | filters.group))
+async def cmd_resume(_, message: Message):
+    chat_id = message.chat.id
+    st = players.get(chat_id)
+    if not st:
+        await message.reply_text("No active playback to resume.")
+        return
+    try:
+        # resume_stream may work; if not, re-join from stored position
+        try:
+            await pytgcalls.resume_stream(chat_id)
+            players[chat_id]["playing"] = True
+            players[chat_id]["started_at"] = time.time()
+            await message.reply_text("Resumed ▶️")
+            return
+        except Exception:
+            # fallback: stop and restart from position
+            await pytgcalls.stop(chat_id)
+    except Exception:
+        pass
+    # fallback: re-play from saved position
+    try:
+        await start_playback(chat_id, st["file"], start_time=st.get("position", 0))
+        await message.reply_text("Resumed ▶️")
+    except Exception as e:
+        await message.reply_text(f"Resume failed: {e}")
+
+@app.on_message(filters.command("seek") & (filters.private | filters.group))
+async def cmd_seek(_, message: Message):
+    chat_id = message.chat.id
+    args = message.text.split()
+    if len(args) < 2:
+        await message.reply_text("Usage: /seek +/-10  or /seek 120  (seconds)")
+        return
+    st = players.get(chat_id)
+    if not st:
+        await message.reply_text("No active playback.")
+        return
+    curpos = st.get("position", 0)
+    # if playing, add elapsed
+    if st.get("playing"):
+        curpos += int(time.time() - st.get("started_at", time.time()))
+    arg = args[1]
+    try:
+        if arg.startswith("+") or arg.startswith("-"):
+            delta = int(arg)
+            newpos = max(0, curpos + delta)
+        else:
+            newpos = max(0, int(arg))
+    except:
+        await message.reply_text("Invalid argument for seek.")
+        return
+    # stop and re-play from newpos
+    try:
+        await pytgcalls.stop(chat_id)
+    except Exception:
+        pass
+    try:
+        await start_playback(chat_id, st["file"], start_time=newpos)
+        await message.reply_text(f"Seeked to {newpos} seconds ⏩")
+    except Exception as e:
+        await message.reply_text(f"Seek failed: {e}")
+
+@app.on_message(filters.command("stop") & (filters.private | filters.group))
+async def cmd_stop(_, message: Message):
+    chat_id = message.chat.id
+    if chat_id not in players:
+        await message.reply_text("Nothing to stop.")
+        return
+    try:
+        await pytgcalls.stop(chat_id)
+    except Exception:
+        pass
+    # optionally delete file
+    fpath = players[chat_id].get("file")
+    try:
+        if fpath and os.path.exists(fpath):
+            os.remove(fpath)
+    except Exception:
+        pass
+    players.pop(chat_id, None)
+    await message.reply_text("Stopped ⏹️ and cleaned up.")
+
+@app.on_message(filters.command("status") & (filters.private | filters.group))
+async def cmd_status(_, message: Message):
+    chat_id = message.chat.id
+    st = players.get(chat_id)
+    if not st:
+        await message.reply_text("No active playback.")
+        return
+    pos = st.get("position", 0)
+    if st.get("playing"):
+        pos += int(time.time() - st.get("started_at", time.time()))
+    await message.reply_text(f"File: {st.get('file')}\nPosition: {int(pos)} sec\nPlaying: {st.get('playing')}")
+
+# graceful cleanup on shutdown
+async def shutdown():
+    try:
+        await pytgcalls.stop()
+    except Exception:
+        pass
+    try:
+        await app.stop()
+    except Exception:
+        pass
+
+# small background cleaner to remove old temp files periodically
+async def periodic_cleanup():
+    while True:
+        try:
+            cleanup_temp()
+        except Exception:
+            pass
+        await asyncio.sleep(600)  # every 10 minutes
+
+# run
+if __name__ == "__main__":
+    async def main():
+        await app.start()
+        print("Userbot started. Waiting for /play commands.")
+        # schedule cleanup task
+        asyncio.create_task(periodic_cleanup())
+        # keep running
+        from pyrogram import idle
+        await idle()
+        # on exit
+        await shutdown()
+
+    try:
+        asyncio.get_event_loop().run_until_complete(main())
+    except KeyboardInterrupt:
+        print("Stopping...")
+        asyncio.get_event_loop().run_until_complete(shutdown())
