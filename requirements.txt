@@ -3,4 +3,4 @@ tgcrypto==1.2.5
 pytgcalls==3.0.0.dev22
 python-dotenv
 aiofiles
-av==10.0.0
+av==8.1.0
