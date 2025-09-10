@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH"))
+API_HASH = os.getenv("API_HASH")
 SESSION = os.getenv("SESSION")
 
 app = Client("bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION)
@@ -14,7 +14,7 @@ pytgcalls = PyTgCalls(app)
 
 @app.on_message(filters.command("start"))
 async def start(_, message):
-    await message.reply("Bot chal raha hai — use /play <url> in group VC.")
+    await message.reply("✅ Bot chal raha hai — /play <url> bhejo group VC me audio play karne ke liye.")
 
 @app.on_message(filters.command("play") & filters.group)
 async def play(_, message):
@@ -25,8 +25,11 @@ async def play(_, message):
     chat_id = message.chat.id
 
     try:
-        await pytgcalls.play(chat_id, url)
-        await message.reply(f"▶️ Now playing: {url}")
+        await pytgcalls.join_group_call(
+            chat_id,
+            url
+        )
+        await message.reply(f"▶️ Playing: {url}")
     except Exception as e:
         await message.reply(f"❌ Error: {e}")
 
@@ -34,15 +37,15 @@ async def play(_, message):
 async def stop(_, message):
     chat_id = message.chat.id
     try:
-        await pytgcalls.stop(chat_id)
-        await message.reply("⏹ Playback stopped.")
+        await pytgcalls.leave_group_call(chat_id)
+        await message.reply("⏹ Stopped playback.")
     except Exception as e:
         await message.reply(f"❌ Error: {e}")
 
 async def main():
     await app.start()
     await pytgcalls.start()
-    print("Bot is up and ready!")
+    print("🚀 Bot is running...")
     await idle()
 
 if __name__ == "__main__":
