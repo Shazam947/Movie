@@ -1,74 +1,71 @@
-import asyncio
+import os
 from pyrogram import Client, filters
-from pytgcalls import PyTgCalls, idle
-from pytgcalls.types.input_stream import InputStream
-from pytgcalls.types.input_stream import InputAudioStream
+from pytgcalls import PyTgCalls
+from pytgcalls.types.input_stream import InputAudioStream, InputVideoStream
+from pytgcalls.types.input_stream.quality import MediumAudioQuality, MediumVideoQuality
+from pytgcalls.types import AudioVideoPiped
+from dotenv import load_dotenv
 
-# apna config set karo
-API_ID = int("29684831")
-API_HASH = "33c51717f00a7b7431dbc8e1894c8d58"
-SESSION = "BQE1hZwAUsUKRBkYc-addSD1ayxFN62wXdd-xPbtqDRGyPVgS67h2fskzr4V-xTyUBL1FJzgnHjKQi0O5RvZ7dq7NU4QT78fnJQAiweGQ0OP0pk4vh44I5nRALuUjR8EuZHsBG798UMJhv5U8_YOSxjG5ue4PkVHQgb2Ug86pd8KXaoDK6gx2kdXxNfc2jXlg4EjlQy4A3welIRsfytI0D5H9q4HuRMrcJ5VmkTE8-u4IoO0__DOWX1RADzLfXjSTi9rzFbR6nyjY0mhM7eDF1hM24_EoBMGUMmTKzPCemJdEdBfkHr05DUKzLS-fOqpZYMOhJ93NxTmo7RGQDbvRfgl8V6phQAAAAHhdxYfAA"
+# Load env
+load_dotenv()
 
-app = Client(SESSION, api_id=API_ID, api_hash=API_HASH)
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+SESSION_STRING = os.getenv("SESSION_STRING")
+
+app = Client("bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
 pytgcalls = PyTgCalls(app)
 
 
-# 🔹 join + play
-@app.on_message(filters.command("play") & filters.me)
-async def play_handler(client, message):
-    if len(message.command) < 2:
-        return await message.reply("Usage: /play filename.mp3")
+@app.on_message(filters.command("play") & filters.reply)
+async def play_file(_, message):
+    if not message.reply_to_message or not message.reply_to_message.video and not message.reply_to_message.document:
+        return await message.reply("Reply to a video or audio file!")
 
-    file = message.command[1]
+    file_path = await message.reply_to_message.download()
     chat_id = message.chat.id
 
     await pytgcalls.join_group_call(
         chat_id,
-        InputStream(
-            InputAudioStream(
-                file,
-            )
+        AudioVideoPiped(
+            file_path,
+            audio_parameters=MediumAudioQuality(),
+            video_parameters=MediumVideoQuality(),
         ),
     )
-    await message.reply(f"▶️ Playing: {file}")
+    await message.reply("▶️ Playing in VC!")
 
 
-# 🔹 pause
-@app.on_message(filters.command("pause") & filters.me)
-async def pause_handler(client, message):
-    await pytgcalls.pause_stream(message.chat.id)
-    await message.reply("⏸ Paused")
+@app.on_message(filters.command("stop"))
+async def stop(_, message):
+    chat_id = message.chat.id
+    await pytgcalls.leave_group_call(chat_id)
+    await message.reply("⏹️ Stopped streaming.")
 
 
-# 🔹 resume
-@app.on_message(filters.command("resume") & filters.me)
-async def resume_handler(client, message):
-    await pytgcalls.resume_stream(message.chat.id)
-    await message.reply("▶️ Resumed")
+@app.on_message(filters.command("pause"))
+async def pause(_, message):
+    chat_id = message.chat.id
+    await pytgcalls.pause_stream(chat_id)
+    await message.reply("⏸️ Paused.")
 
 
-# 🔹 skip (basically change track)
-@app.on_message(filters.command("skip") & filters.me)
-async def skip_handler(client, message):
-    await pytgcalls.leave_group_call(message.chat.id)
-    await message.reply("⏭ Skipped")
+@app.on_message(filters.command("resume"))
+async def resume(_, message):
+    chat_id = message.chat.id
+    await pytgcalls.resume_stream(chat_id)
+    await message.reply("▶️ Resumed.")
 
 
-# 🔹 stop
-@app.on_message(filters.command("stop") & filters.me)
-async def stop_handler(client, message):
-    await pytgcalls.leave_group_call(message.chat.id)
-    await message.reply("⏹ Stopped")
-
-
-# run
 async def main():
     await app.start()
     await pytgcalls.start()
-    print("✅ Bot is running...")
+    print("Bot is running...")
     await idle()
-    await app.stop()
 
 
 if __name__ == "__main__":
+    import asyncio
+    from pyrogram import idle
+
     asyncio.run(main())
