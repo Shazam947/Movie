@@ -1,7 +1,5 @@
 pyrogram==2.0.106
 tgcrypto
+py-tgcalls==2.2.0rc1
 python-dotenv
 aiofiles
-# ✅ Correct repo name and egg
-git+https://github.com/pytgcalls/pytgcalls@dev#egg=py-tgcalls
-av>=10.0.0
