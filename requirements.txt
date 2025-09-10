@@ -1,6 +1,8 @@
 pyrogram==2.0.106
 tgcrypto
-pytgcalls @ git+https://github.com/pytgcalls/pytgcalls@dev
 python-dotenv
 aiofiles
+# latest dev branch for compatibility
+pytgcalls @ git+https://github.com/pytgcalls/pytgcalls@dev
+# PyAV latest (FFmpeg 6/7 compatible)
 av>=10.0.0
