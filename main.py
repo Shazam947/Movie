@@ -1,10 +1,9 @@
 import os
 from pyrogram import Client, filters
 from pytgcalls import PyTgCalls
-from pytgcalls.types.input_stream import InputAudioStream, InputVideoStream
-from pytgcalls.types.input_stream.quality import MediumAudioQuality, MediumVideoQuality
-from pytgcalls.types import AudioVideoPiped
+from pytgcalls.types import AudioPiped, AudioVideoPiped
 from dotenv import load_dotenv
+from pyrogram import idle
 
 # Load env
 load_dotenv()
@@ -19,21 +18,20 @@ pytgcalls = PyTgCalls(app)
 
 @app.on_message(filters.command("play") & filters.reply)
 async def play_file(_, message):
-    if not message.reply_to_message or not message.reply_to_message.video and not message.reply_to_message.document:
-        return await message.reply("Reply to a video or audio file!")
+    if not message.reply_to_message:
+        return await message.reply("⚠️ Reply to an audio/video file!")
 
-    file_path = await message.reply_to_message.download()
+    file = message.reply_to_message
+    file_path = await file.download()
     chat_id = message.chat.id
 
-    await pytgcalls.join_group_call(
-        chat_id,
-        AudioVideoPiped(
-            file_path,
-            audio_parameters=MediumAudioQuality(),
-            video_parameters=MediumVideoQuality(),
-        ),
-    )
-    await message.reply("▶️ Playing in VC!")
+    if file.video or file.document:
+        stream = AudioVideoPiped(file_path)
+    else:
+        stream = AudioPiped(file_path)
+
+    await pytgcalls.join_group_call(chat_id, stream)
+    await message.reply("▶️ Now playing in VC!")
 
 
 @app.on_message(filters.command("stop"))
@@ -45,27 +43,23 @@ async def stop(_, message):
 
 @app.on_message(filters.command("pause"))
 async def pause(_, message):
-    chat_id = message.chat.id
-    await pytgcalls.pause_stream(chat_id)
+    await pytgcalls.pause_stream(message.chat.id)
     await message.reply("⏸️ Paused.")
 
 
 @app.on_message(filters.command("resume"))
 async def resume(_, message):
-    chat_id = message.chat.id
-    await pytgcalls.resume_stream(chat_id)
+    await pytgcalls.resume_stream(message.chat.id)
     await message.reply("▶️ Resumed.")
 
 
 async def main():
     await app.start()
     await pytgcalls.start()
-    print("Bot is running...")
+    print("✅ Bot is running...")
     await idle()
 
 
 if __name__ == "__main__":
     import asyncio
-    from pyrogram import idle
-
     asyncio.run(main())
