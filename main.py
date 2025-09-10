@@ -1,7 +1,7 @@
 import asyncio
 from pyrogram import Client, filters
 from pytgcalls import PyTgCalls, idle
-from pytgcalls.types import InputStream
+from pytgcalls.types.input_stream import InputStream
 from pytgcalls.types.input_stream import InputAudioStream
 
 # apna config set karo
