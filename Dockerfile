@@ -5,19 +5,16 @@ WORKDIR /app
 # install system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    git \
-    curl \
-    pkg-config \
-    build-essential \
     libavformat-dev \
     libavcodec-dev \
     libavdevice-dev \
+    libavfilter-dev \
+    libswscale-dev \
     libavutil-dev \
     libswresample-dev \
-    libswscale-dev \
-    libavfilter-dev \
+    gcc \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
 
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
