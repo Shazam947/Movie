@@ -1,32 +1,39 @@
+# Base image
 FROM python:3.10-slim
 
-WORKDIR /app
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
 
-# -------- System dependencies install --------
+# Install system deps (ffmpeg + dev libs for PyAV)
 RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    pkg-config \
-    build-essential \
     ffmpeg \
-    libavformat-dev \
     libavcodec-dev \
+    libavformat-dev \
     libavdevice-dev \
+    libavfilter-dev \
     libavutil-dev \
     libswresample-dev \
     libswscale-dev \
-    libavfilter-dev \
+    gcc \
+    python3-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# -------- Install Python dependencies --------
+# Set working dir
+WORKDIR /app
+
+# Copy requirements
 COPY requirements.txt .
 
+# Install Python deps
 RUN pip install --upgrade pip \
-    && (pip install --no-cache-dir --only-binary=:all: av==8.1.0 || pip install --no-cache-dir av==8.1.0) \
     && pip install --no-cache-dir -r requirements.txt
 
-# -------- Copy app code --------
+# Copy project files
 COPY . .
 
-# -------- Run app --------
-CMD ["python", "telegram_vc_userbot.py"]
+# Expose port (agar bot ka web server use kare)
+EXPOSE 8080
+
+# Run bot
+CMD ["python", "main.py"]
